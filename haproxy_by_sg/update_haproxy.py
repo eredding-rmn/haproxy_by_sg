@@ -1,11 +1,17 @@
 #/usr/bin/env python
-"""configure haproxy by passing security group and legion"""
+"""configure haproxy by passing security group and specific item to capture in host 'name' tags
+
+Todo:
+- add real logger
+- add more smarts around errors; haproxy init script seems to be dumb on debian
+"""
 import os
 import sys
 import time
 import shutil
 import boto
 import subprocess
+from subprocess import CalledProcessError
 from argparse import ArgumentParser
 from jinja2 import Environment, PackageLoader
 
@@ -14,7 +20,7 @@ def define_arguments():
     """ Define command line arguments.
     :return: Argparser object
     """
-    std_args = ArgumentParser(add_help=False)
+    std_args = ArgumentParser(add_help=True)
     std_args.add_argument("sgroup_name", help="security group containing backend nodes")
     std_args.add_argument("unique_bit", help="unique portion used in instance naming to group instances")
     std_args.add_argument("--config-path", help="haproxy configuration path", default='/etc/haproxy/haproxy.cfg')
@@ -29,12 +35,11 @@ def define_arguments():
     std_args.add_argument("--stats-port", help="stats port for HAproxy", default='8080')
     std_args.add_argument("--dry-run", action="store_true", default=False)
     std_args.add_argument("--skip-restart", action="store_true", default=False)
-    port_args = std_args.add_mutually_exclusive_group()
-    port_args.add_argument("--app-port", help="application port for HAproxy", default='80')
-    diff_port_args = port_args.add_argument_group(title='alternate port mapping')
-    diff_port_args.add_argument("--listener-port", help="incoming port HAproxy listens", default='80')
-    diff_port_args.add_argument("--backend-port", help="backend port for workers", default='80')
-
+    port_args = std_args.add_argument_group('port configuration')
+    port_args.add_argument("--app-port", help="application port for HAproxy; sets listener port and backend port the same", default='80')
+    spec_port_args = std_args.add_argument_group(title='alternate port mapping')
+    spec_port_args.add_argument("--listener-port", help="incoming port HAproxy listens; replaces --app-port and requires --backend-port", default=None)
+    spec_port_args.add_argument("--backend-port", help="backend port that workers listen; replaces --app-port and requires --listener-port", default=None)
     return std_args
 
 
@@ -74,6 +79,16 @@ def main():
         sys.exit(1)
     conf = Environment(loader=PackageLoader('haproxy_by_sg'), trim_blocks=True)
     template_name = 'haproxy.cfg'
+    if args.app_port and (not args.listener_port and not args.backend_port):
+        port_variables = {'app_port': args.app_port}
+    elif args.listener_port and args.backend_port:
+        port_variables = {
+            'listener_port': args.listener_port,
+            'backend_port': args.backend_port
+        }
+    else:
+        print "ERROR: listener-port and backend-port must both be specified"
+        sys.exit(1)
     template_variables = {
         'server_timeout': args.server_timeout,
         'client_timeout': args.client_timeout,
@@ -83,10 +98,10 @@ def main():
         'stats_auth_user': args.stats_auth_user,
         'stats_auth_password': args.stats_auth_password,
         'app_name': args.app_name,
-        'app_port': args.app_port,
         'app_mode': args.app_mode,
         'backend_addresses': backend_addresses
     }
+    template_variables.update(port_variables)
     if not os.path.isfile(args.config_path):
         print "ERROR: config file %s doesn't exist" % args.config_path
         sys.exit(1)
@@ -109,10 +124,12 @@ def main():
             with open(args.config_path, 'w') as f:
                 f.write('\n'.join(newfile))
             if not args.skip_restart:
-                subprocess.check_call(['service', 'haproxy', 'reload'])
+                restart_return = subprocess.check_call(['service', 'haproxy', 'reload'])
+                if restart_return > 1:
+                    raise CalledProcessError('restart failed due to misconfiguration')
             else:
                 print "Skipping restart of haproxy..."
-        except subprocess.CalledProcessError as e:
+        except CalledProcessError as e:
             print "ERROR restarting haproxy service: {0}".format(e)
             restore_old_config_and_die(args.config_path, new_config_file_path)
         except Exception as e:
