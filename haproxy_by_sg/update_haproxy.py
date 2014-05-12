@@ -9,7 +9,7 @@ import os
 import sys
 import time
 import shutil
-import boto
+import boto.ec2
 import subprocess
 from subprocess import CalledProcessError
 from argparse import ArgumentParser
@@ -21,6 +21,7 @@ def define_arguments():
     :return: Argparser object
     """
     std_args = ArgumentParser(add_help=True)
+    std_args.add_argument("aws_region", help="a valid aws region: us-east-1, us-west-1, us-west-2, etc..")
     std_args.add_argument("sgroup_name", help="security group containing backend nodes")
     std_args.add_argument("unique_bit", help="unique portion used in instance naming to group instances")
     std_args.add_argument("--config-path", help="haproxy configuration path", default='/etc/haproxy/haproxy.cfg')
@@ -67,7 +68,10 @@ def main():
     should_i_write = False
     argparser = define_arguments()
     args = argparser.parse_args()
-    botoEC2 = boto.connect_ec2()
+    if not args.aws_region:
+        print "ERROR: specify region!"
+        sys.exit(1)
+    botoEC2 = boto.ec2.connect_to_region(args.aws_region)
     backend_addresses = {}
     template_variables = {}
     for r in botoEC2.get_all_instances(filters={'group-name': '*{0}*'.format(args.sgroup_name), 'tag:Name': '*{0}*'.format(args.unique_bit)}):
