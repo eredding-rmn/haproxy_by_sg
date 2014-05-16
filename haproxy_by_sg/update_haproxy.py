@@ -26,13 +26,13 @@ def define_arguments():
     std_args.add_argument("unique_bit", help="unique portion used in instance naming to group instances")
     std_args.add_argument("--config-path", help="haproxy configuration path", default='/etc/haproxy/haproxy.cfg')
     std_args.add_argument("--connection-timeout", help="haproxy global connection_timeout", default='5000')
-    std_args.add_argument("--client-timeout", help="haproxy global clitimeout", default='90')
-    std_args.add_argument("--server-timeout", help="haproxy global srvtimeout", default='90')
+    std_args.add_argument("--client-timeout", help="haproxy global clitimeout", default='900000000')
+    std_args.add_argument("--server-timeout", help="haproxy global srvtimeout", default='900000000')
     std_args.add_argument("--max-connections", help="haproxy global maxconn", default='2000')
     std_args.add_argument("--stats-auth-user", help="stats authentication user", default='stats')
     std_args.add_argument("--stats-auth-password", help="stats authentication password", default='stats123')
     std_args.add_argument("--app-name", help="application name for HAproxy", default='app1')
-    std_args.add_argument("--app-mode", help="application mode for HAproxy", default='tcp')
+    std_args.add_argument("--app-ssl", action="store_true", help="if the application uses SSL, this enables the ssl health check", default=True)
     std_args.add_argument("--stats-port", help="stats port for HAproxy", default='8080')
     std_args.add_argument("--dry-run", action="store_true", default=False)
     std_args.add_argument("--skip-restart", action="store_true", default=False)
@@ -103,7 +103,8 @@ def main():
         'stats_auth_password': args.stats_auth_password,
         'app_name': args.app_name,
         'app_mode': args.app_mode,
-        'backend_addresses': backend_addresses
+        'backend_addresses': backend_addresses,
+        'app_ssl': args.app_ssl
     }
     template_variables.update(port_variables)
     if not os.path.isfile(args.config_path):
