@@ -32,6 +32,7 @@ def define_arguments():
     std_args.add_argument("--stats-auth-user", help="stats authentication user", default='stats')
     std_args.add_argument("--stats-auth-password", help="stats authentication password", default='stats123')
     std_args.add_argument("--app-name", help="application name for HAproxy", default='app1')
+    std_args.add_argument("--app-mode", help="application name for HAproxy", default='tcp')
     std_args.add_argument("--app-ssl", action="store_true", help="if the application uses SSL, this enables the ssl health check", default=True)
     std_args.add_argument("--stats-port", help="stats port for HAproxy", default='8080')
     std_args.add_argument("--dry-run", action="store_true", default=False)
