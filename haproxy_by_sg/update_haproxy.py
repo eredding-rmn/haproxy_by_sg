@@ -24,6 +24,7 @@ def define_arguments():
     std_args.add_argument("aws_region", help="a valid aws region: us-east-1, us-west-1, us-west-2, etc..")
     std_args.add_argument("sgroup_name", help="security group containing backend nodes")
     std_args.add_argument("unique_bit", help="unique portion used in instance naming to group instances")
+    std_args.add_argument("--public-ip", help="use public ip", action="store_true", default=False)
     std_args.add_argument("--config-path", help="haproxy configuration path", default='/etc/haproxy/haproxy.cfg')
     std_args.add_argument("--connection-timeout", help="haproxy global connection_timeout", default='5000')
     std_args.add_argument("--client-timeout", help="haproxy global clitimeout", default='900000000')
@@ -78,7 +79,10 @@ def main():
     for r in botoEC2.get_all_instances(filters={'group-name': '*{0}*'.format(args.sgroup_name), 'tag:Name': '*{0}*'.format(args.unique_bit)}):
         for inst in r.instances:
             if inst.state == 'running':
-                backend_addresses[inst.id] = inst.private_ip_address
+                if args.public_ip:
+                    backend_addresses[inst.id] = inst.ip_address
+                else:
+                    backend_addresses[inst.id] = inst.private_ip_address
     if len(backend_addresses) < 1:
         print "ERROR: unable to find instances that match the sgroup_name and unique_bit provided"
         sys.exit(1)
@@ -130,7 +134,7 @@ def main():
             with open(args.config_path, 'w') as f:
                 f.write('\n'.join(newfile))
             if not args.skip_restart:
-                restart_return = subprocess.check_call(['service', 'haproxy', 'reload'])
+                restart_return = subprocess.check_call(['service', 'haproxy', 'restart'])
                 if restart_return > 1:
                     raise CalledProcessError('restart failed due to misconfiguration')
             else:
