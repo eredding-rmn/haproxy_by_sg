@@ -134,7 +134,7 @@ def main():
             with open(args.config_path, 'w') as f:
                 f.write('\n'.join(newfile))
             if not args.skip_restart:
-                restart_return = subprocess.check_call(['service', 'haproxy', 'restart'])
+                restart_return = subprocess.check_call(['/etc/init.d/haproxy', 'restart'])
                 if restart_return > 1:
                     raise CalledProcessError('restart failed due to misconfiguration')
             else:
