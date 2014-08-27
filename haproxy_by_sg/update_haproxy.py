@@ -24,7 +24,7 @@ def define_arguments():
     std_args.add_argument("aws_region", help="a valid aws region: us-east-1, us-west-1, us-west-2, etc..")
     std_args.add_argument("sgroup_name", help="security group containing backend nodes")
     std_args.add_argument("unique_bit", help="unique portion used in instance naming to group instances")
-    std_args.add_argument("--public-ip", help="use public ip", action="store_true", default=False)
+
     std_args.add_argument("--config-path", help="haproxy configuration path", default='/etc/haproxy/haproxy.cfg')
     std_args.add_argument("--connection-timeout", help="haproxy global connection_timeout", default='5000')
     std_args.add_argument("--client-timeout", help="haproxy global clitimeout", default='900000000')
@@ -34,10 +34,21 @@ def define_arguments():
     std_args.add_argument("--stats-auth-password", help="stats authentication password", default='stats123')
     std_args.add_argument("--app-name", help="application name for HAproxy", default='app1')
     std_args.add_argument("--app-mode", help="application name for HAproxy", default='tcp')
-    std_args.add_argument("--app-ssl", action="store_true", help="if the application uses SSL, this enables the ssl health check", default=True)
+    std_args.add_argument("--app-algo", choices=['roundrobin','leastconn', 'static-rr','source'], default='roundrobin', help="application load balancing algorithm; choose roundrobin (default), leastconn, static-rr, source")
+    std_args.add_argument("--app-maxconn", help="maximum number of connections per node; defaults to 200", default=200)
+    std_args.add_argument("--app-maxqueue", help="NOT SUPPORTED: maximum number of connections to queue for a backend node; defaults to 0 (unlimited)", default=0)
     std_args.add_argument("--stats-port", help="stats port for HAproxy", default='8080')
+
+    std_args.add_argument("--check-interval", help="haproxy server check interval", default='5000')
+    std_args.add_argument("--check-rise", help="haproxy server check rise", default='2')
+    std_args.add_argument("--check-fall", help="haproxy server check fall", default='3')
+    ### BOOLS
+    std_args.add_argument("--public-ip", help="use public ip", action="store_true", default=False)
+    std_args.add_argument("--hard-restart", help="issue a hard restart instead of a soft restart", action="store_true", default=False)
+    std_args.add_argument("--app-ssl", action="store_true", help="if the application uses SSL, this enables the ssl health check", default=True)
     std_args.add_argument("--dry-run", action="store_true", default=False)
     std_args.add_argument("--skip-restart", action="store_true", default=False)
+    std_args.add_argument("--test", action="store_true", default=False)
     port_args = std_args.add_argument_group('port configuration')
     port_args.add_argument("--app-port", help="application port for HAproxy; sets listener port and backend port the same", default='80')
     spec_port_args = std_args.add_argument_group(title='alternate port mapping')
@@ -66,6 +77,29 @@ def backup_old_config(conf_file, replacement_file):
         sys.exit(1)
 
 
+def soft_restart():
+    '''
+    calls init script to reload the configuration;
+    persistent connections can lead to the previous process sitting around.
+    '''
+    restart_return = subprocess.check_call(['/etc/init.d/haproxy', 'reload'])
+    if restart_return > 1:
+        return False
+    else:
+        return True
+
+
+def hard_restart():
+    '''
+    calls init script to do a hard restart of the daemon
+    '''
+    restart_return = subprocess.check_call(['/etc/init.d/haproxy', 'reload'])
+    if restart_return > 1:
+        return False
+    else:
+        return True
+
+
 def main():
     should_i_write = False
     argparser = define_arguments()
@@ -73,19 +107,25 @@ def main():
     if not args.aws_region:
         print "ERROR: specify region!"
         sys.exit(1)
-    botoEC2 = boto.ec2.connect_to_region(args.aws_region)
     backend_addresses = {}
     template_variables = {}
-    for r in botoEC2.get_all_instances(filters={'group-name': '*{0}*'.format(args.sgroup_name), 'tag:Name': '*{0}*'.format(args.unique_bit)}):
-        for inst in r.instances:
-            if inst.state == 'running':
-                if args.public_ip:
-                    backend_addresses[inst.id] = inst.ip_address
-                else:
-                    backend_addresses[inst.id] = inst.private_ip_address
-    if len(backend_addresses) < 1:
-        print "ERROR: unable to find instances that match the sgroup_name and unique_bit provided"
-        sys.exit(1)
+    if args.test:
+        backend_addresses['i-xaklsjh'] = '255.255.255.255'
+    else:
+        botoEC2 = boto.ec2.connect_to_region(args.aws_region)
+        for r in botoEC2.get_all_instances(
+            filters={'group-name': '*{0}*'.format(args.sgroup_name), 'tag:Name': '*{0}*'.format(args.unique_bit)}
+        ):
+            for inst in r.instances:
+                if inst.state == 'running':
+                    if args.public_ip:
+                        backend_addresses[inst.id] = inst.ip_address
+                    else:
+                        backend_addresses[inst.id] = inst.private_ip_address
+        if len(backend_addresses) < 1:
+            print "ERROR: unable to find instances that match the sgroup_name and unique_bit provided"
+            sys.exit(1)
+
     conf = Environment(loader=PackageLoader('haproxy_by_sg'), trim_blocks=True)
     template_name = 'haproxy.cfg'
     if args.app_port and (not args.listener_port and not args.backend_port):
@@ -109,7 +149,12 @@ def main():
         'app_name': args.app_name,
         'app_mode': args.app_mode,
         'backend_addresses': backend_addresses,
-        'app_ssl': args.app_ssl
+        'app_ssl': args.app_ssl,
+        'app_balance_algo': args.app_algo,
+        'app_maxconn': args.app_maxconn,
+        'check_interval': args.check_interval,
+        'check_rise': args.check_rise,
+        'check_fall': args.check_fall
     }
     template_variables.update(port_variables)
     if not os.path.isfile(args.config_path):
@@ -134,8 +179,11 @@ def main():
             with open(args.config_path, 'w') as f:
                 f.write('\n'.join(newfile))
             if not args.skip_restart:
-                restart_return = subprocess.check_call(['/etc/init.d/haproxy', 'restart'])
-                if restart_return > 1:
+                if args.hard_restart:
+                    restart_rslt = hard_restart()
+                else:
+                    restart_rslt = soft_restart()
+                if not restart_rslt:
                     raise CalledProcessError('restart failed due to misconfiguration')
             else:
                 print "Skipping restart of haproxy..."
