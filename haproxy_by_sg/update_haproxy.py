@@ -114,7 +114,7 @@ def main():
     else:
         botoEC2 = boto.ec2.connect_to_region(args.aws_region)
         for r in botoEC2.get_all_instances(
-            filters={'group-name': '*{0}*'.format(args.sgroup_name), 'tag:Name': '*{0}*'.format(args.unique_bit)}
+            filters={'instance.group-name': '*{0}*'.format(args.sgroup_name), 'tag:Name': '*{0}*'.format(args.unique_bit)}
         ):
             for inst in r.instances:
                 if inst.state == 'running':
